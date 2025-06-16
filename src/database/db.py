@@ -1,54 +1,46 @@
-""" The database module
-"""
-from sqlalchemy.orm import sessionmaker, scoped_session, declarative_base
+# database/db.py - Updated for Render PostgreSQL
+
+import os
 from sqlalchemy import create_engine
-from utils.settings import settings, BASE_DIR
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+from dotenv import load_dotenv
 
+load_dotenv()
 
-DB_HOST = settings.DB_HOST
-DB_PORT = settings.DB_PORT
-DB_USER = settings.DB_USER
-DB_PASSWORD = settings.DB_PASSWORD
-DB_NAME = settings.DB_NAME
-DB_TYPE = settings.DB_TYPE
+# Get database URL from environment variable
+DATABASE_URL = os.getenv("DATABASE_URL")
 
-
-def get_db_engine(test_mode: bool = False):
-    DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-
-    if DB_TYPE == "sqlite" or test_mode:
-        BASE_PATH = f"sqlite:///{BASE_DIR}"
-        DATABASE_URL = BASE_PATH + "/"
-
-        if test_mode:
-            DATABASE_URL = BASE_PATH + "test.db"
-
-            return create_engine(
-                DATABASE_URL, connect_args={"check_same_thread": False}
-            )
-    elif DB_TYPE == "postgresql":
-        DATABASE_URL = (
-            f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-        )
-
-    return create_engine(DATABASE_URL)
-
-
-engine = get_db_engine()
+if not DATABASE_URL:
+    # Fallback for local development
+    DATABASE_URL = "sqlite:///./test.db"
+    engine = create_engine(DATABASE_URL)
+else:
+    # Handle PostgreSQL URL format for SQLAlchemy 2.0+
+    if DATABASE_URL.startswith("postgres://"):
+        DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+    
+    # Add SSL requirement for Render PostgreSQL
+    if "sslmode" not in DATABASE_URL:
+        separator = "&" if "?" in DATABASE_URL else "?"
+        DATABASE_URL += f"{separator}sslmode=require"
+    
+    # Create engine with SSL settings for Render
+    engine = create_engine(
+        DATABASE_URL,
+        pool_pre_ping=True,
+        pool_recycle=300,
+        connect_args={
+            "sslmode": "require",
+            "connect_timeout": 10
+        }
+    )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-db_session = scoped_session(SessionLocal)
-
 Base = declarative_base()
 
-
-def create_database():
-    return Base.metadata.create_all(bind=engine)
-
-
 def get_db():
-    db = db_session()
+    db = SessionLocal()
     try:
         yield db
     finally:
