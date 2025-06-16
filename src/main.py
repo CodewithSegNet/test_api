@@ -20,8 +20,8 @@ from fastapi.responses import FileResponse
 
 
 # Import database components
-from app.database.db import SessionLocal, engine, get_db
-from app.models.model import Base, User, Job, Application
+from database.db import SessionLocal, engine, get_db
+from models.model import Base, User, Job, Application
 
 
 # Create database tables
@@ -44,7 +44,7 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 # APP URL Configuration - Update this with your actual domain
-APP_URL = "http://127.0.0.1:8000"
+APP_URL = "https://test-api-v8gp.onrender.com"
 
 # Security
 security = HTTPBearer()
