@@ -2,4 +2,5 @@
 alembic.ini
 alembic
 venv/*
+uploads/*
 test_api/*
