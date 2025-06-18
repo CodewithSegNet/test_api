@@ -56,9 +56,9 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 # APP URL Configuration - Update this with your actual domain
-# APP_URL = "https://test-api-v8gp.onrender.com"
+APP_URL = "https://test-api-v8gp.onrender.com"
 
-APP_URL = "http://127.0.0.1:8000"
+# APP_URL = "http://127.0.0.1:8000"
 
 
 # Security
