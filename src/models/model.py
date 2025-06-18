@@ -24,6 +24,7 @@ class Job(Base):
     title = Column(String(200), nullable=False)
     description = Column(Text, nullable=False)
     requirements = Column(Text, nullable=True)
+    responsibility = Column(Text, nullable=True)
     location = Column(String(100), nullable=False, default="Abuja")
     
     # Job type and employment details
@@ -79,11 +80,11 @@ class Application(Base):
     address = Column(String(100), nullable=False)
     email = Column(String(100), nullable=False)
     phone = Column(String(20), nullable=False)
-    portfolio = Column(String, nullable=True)
+    portfolio = Column(String(255), nullable=True)
     social_link = Column(String(100), nullable=False)
-    experience = Column(Text, nullable=False)
-    cover_letter = Column(Text, nullable=False)
-    cv_filename = Column(String(255), nullable=True) 
+    state_of_resident = Column(Text, nullable=False)
+    cover_letter = Column(String(255), nullable=False)
+    cv_filename = Column(String(255), nullable=False) 
     applied_at = Column(DateTime, default=datetime.utcnow)
     status = Column(String(50), default="pending")
     

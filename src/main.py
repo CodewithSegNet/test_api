@@ -17,6 +17,7 @@ import os
 import uuid
 from pathlib import Path
 from fastapi.responses import FileResponse
+from contextlib import asynccontextmanager
 
 
 # Import database components
@@ -27,7 +28,18 @@ from models.model import Base, User, Job, Application
 # Create database tables
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="Job Management API")
+# Lifespan event handler to replace deprecated on_event
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+    COVER_LETTER_DIR.mkdir(parents=True, exist_ok=True)
+    print(f"Upload directories created: {UPLOAD_DIR}, {COVER_LETTER_DIR}")
+    yield
+    # Shutdown (if needed)
+    pass
+
+app = FastAPI(title="Job Management API", lifespan=lifespan)
 
 # CORS middleware
 app.add_middleware(
@@ -44,10 +56,17 @@ ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 # APP URL Configuration - Update this with your actual domain
-APP_URL = "https://test-api-v8gp.onrender.com"
+# APP_URL = "https://test-api-v8gp.onrender.com"
+
+APP_URL = "http://127.0.0.1:8000"
+
 
 # Security
 security = HTTPBearer()
+
+# Directory for storing uploaded files
+UPLOAD_DIR = Path("uploads/cvs")
+COVER_LETTER_DIR = Path("uploads/cover_letters")
 
 # Pydantic Models
 class UserCreate(BaseModel):
@@ -68,8 +87,10 @@ class JobBase(BaseModel):
     title: str
     description: str
     requirements: Optional[str] = None
+    responsibility: Optional[str] = None
     location: str
     job_type: str 
+    salary: Optional[str] = None
     salary_range: Optional[str] = None
     application_deadline: Optional[datetime] = None
     is_active: bool = True
@@ -81,8 +102,10 @@ class JobUpdate(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
     requirements: Optional[str] = None
+    responsibility: Optional[str] = None
     location: Optional[str] = None
     job_type: Optional[str] = None 
+    salary: Optional[str] = None
     salary_range: Optional[str] = None
     application_deadline: Optional[datetime] = None
     is_active: Optional[bool] = None
@@ -92,8 +115,10 @@ class JobResponse(BaseModel):
     title: str
     description: str
     requirements: Optional[str] = None
+    responsibility: Optional[str] = None
     location: str
     job_type: str
+    salary: Optional[str] = None
     salary_range: Optional[str] = None
     application_deadline: Optional[datetime] = None
     is_active: bool
@@ -106,16 +131,20 @@ class JobResponse(BaseModel):
 # Application Models
 class ApplicationBase(BaseModel):
     job_id: int
-    name: str
+    first_name: str
+    middle_name: Optional[str] = None
+    last_name: str
+    dob: str
+    state_of_origin: str
+    address: str
     email: EmailStr
     phone: str
-    experience: str
-    cover_letter: str
-
+    portfolio: Optional[str] = None
+    social_link: str
+    state_of_resident: str
 
 class StatusUpdate(BaseModel):
     status: str
-
 
 # Updated Application Models
 class ApplicationCreate(BaseModel):
@@ -130,8 +159,8 @@ class ApplicationCreate(BaseModel):
     phone: str
     portfolio: Optional[str] = None
     social_link: str
-    experience: str
-    cover_letter: str
+    state_of_resident: str
+    
 
 class ApplicationResponse(BaseModel):
     id: int
@@ -146,8 +175,8 @@ class ApplicationResponse(BaseModel):
     phone: str
     portfolio: Optional[str] = None
     social_link: str
-    experience: str
-    cover_letter: str
+    state_of_resident: str
+    cover_letter: Optional[str] = None  # This will now contain the full URL
     cv_filename: Optional[str] = None  # This will now contain the full URL
     applied_at: datetime
     status: str
@@ -155,20 +184,17 @@ class ApplicationResponse(BaseModel):
     class Config:
         from_attributes = True
 
-
-
 class ApplicationWithJob(ApplicationResponse):
     job: JobResponse
-    
 
-# Directory for storing uploaded CVs
-UPLOAD_DIR = Path("uploads/cvs")
-UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
-
-# Helper function to generate CV URL
+# Helper function to generate file URLs
 def generate_cv_url(username: str, filename: str) -> str:
     """Generate full URL for CV file"""
     return f"{APP_URL}/{username}/cv/{filename}"
+
+def generate_cover_letter_url(username: str, filename: str) -> str:
+    """Generate full URL for cover letter file"""
+    return f"{APP_URL}/{username}/cover_letter/{filename}"
 
 # Auth functions
 def hash_password(password: str) -> str:
@@ -240,14 +266,11 @@ async def login(user: UserLogin, db: Session = Depends(get_db)):
 async def root():
     return {"message": "Job Management API is running"}
 
-
-
 @app.get("/jobs/", response_model=List[JobResponse])
 def get_jobs(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
     """Get all active jobs"""
     jobs = db.query(Job).filter(Job.is_active == True).offset(skip).limit(limit).all()
     return jobs
-
 
 @app.get("/jobs/{job_id}", response_model=JobResponse)
 def get_job(job_id: int, db: Session = Depends(get_db)):
@@ -256,7 +279,6 @@ def get_job(job_id: int, db: Session = Depends(get_db)):
     if job is None:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
-
 
 @app.post("/jobs/", response_model=JobResponse)
 def create_job(job: JobCreate, db: Session = Depends(get_db)):
@@ -274,8 +296,6 @@ def create_job(job: JobCreate, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(db_job)
     return db_job
-
-
 
 @app.put("/jobs/{job_id}", response_model=JobResponse)
 def update_job(job_id: int, job_update: JobUpdate, db: Session = Depends(get_db)):
@@ -301,7 +321,6 @@ def update_job(job_id: int, job_update: JobUpdate, db: Session = Depends(get_db)
     db.refresh(db_job)
     return db_job
 
-
 @app.delete("/jobs/{job_id}")
 def delete_job(job_id: int, db: Session = Depends(get_db)):
     """Delete a job posting (Admin only)"""
@@ -313,14 +332,12 @@ def delete_job(job_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"message": "Job deleted successfully"}
 
-
 # NEW: Get all applications endpoint
 @app.get("/applications-list/", response_model=List[ApplicationWithJob])
 def get_all_applications(skip: int = 0, limit: int = 100, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """Get all applications (Admin only)"""
     applications = db.query(Application).offset(skip).limit(limit).all()
     return applications
-
 
 # NEW: Get applications for a specific job
 @app.get("/jobs/{job_id}/applications", response_model=List[ApplicationResponse])
@@ -333,7 +350,6 @@ def get_job_applications(job_id: int, current_user: User = Depends(get_current_u
     
     applications = db.query(Application).filter(Application.job_id == job_id).all()
     return applications
-
 
 @app.post("/applications/", response_model=ApplicationResponse)
 async def create_application(
@@ -348,9 +364,9 @@ async def create_application(
     phone: str = Form(...),
     portfolio: Optional[str] = Form(None),
     social_link: str = Form(...),
-    experience: str = Form(...),
-    cover_letter: str = Form(...),
+    state_of_resident: str = Form(...),
     cv_file: Optional[UploadFile] = File(None),
+    cover_letter_file: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db)
 ):
     """Submit a job application"""
@@ -378,6 +394,9 @@ async def create_application(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
     
+    # Create username from email (you can modify this logic as needed)
+    username = email.split('@')[0]
+    
     cv_url = None
     if cv_file:
         # Validate file type and size
@@ -386,19 +405,16 @@ async def create_application(
         if cv_file.content_type not in allowed_types:
             raise HTTPException(
                 status_code=400, 
-                detail="Only PDF, DOC, and DOCX files are allowed"
+                detail="CV: Only PDF, DOC, and DOCX files are allowed"
             )
         
         # Check file size (5MB limit)
         if cv_file.size > 5 * 1024 * 1024:
-            raise HTTPException(status_code=400, detail="File size must be less than 5MB")
+            raise HTTPException(status_code=400, detail="CV file size must be less than 5MB")
         
         # Generate unique filename
         file_extension = cv_file.filename.split('.')[-1] if '.' in cv_file.filename else 'pdf'
         unique_filename = f"{uuid.uuid4()}.{file_extension}"
-        
-        # Create username from email (you can modify this logic as needed)
-        username = email.split('@')[0]
         
         # Create user-specific directory
         user_upload_dir = UPLOAD_DIR / username
@@ -413,6 +429,39 @@ async def create_application(
         # Generate full URL for the CV
         cv_url = generate_cv_url(username, unique_filename)
     
+    cover_letter_url = None
+    if cover_letter_file:
+        # Validate file type and size for cover letter
+        allowed_types = ['application/pdf', 'application/msword', 
+                        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                        'text/plain']
+        if cover_letter_file.content_type not in allowed_types:
+            raise HTTPException(
+                status_code=400, 
+                detail="Cover Letter: Only PDF, DOC, DOCX, and TXT files are allowed"
+            )
+        
+        # Check file size (5MB limit)
+        if cover_letter_file.size > 5 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="Cover letter file size must be less than 5MB")
+        
+        # Generate unique filename
+        file_extension = cover_letter_file.filename.split('.')[-1] if '.' in cover_letter_file.filename else 'pdf'
+        unique_filename = f"{uuid.uuid4()}.{file_extension}"
+        
+        # Create user-specific directory for cover letters
+        user_cover_letter_dir = COVER_LETTER_DIR / username
+        user_cover_letter_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Save file
+        file_path = user_cover_letter_dir / unique_filename
+        with open(file_path, "wb") as buffer:
+            content = await cover_letter_file.read()
+            buffer.write(content)
+        
+        # Generate full URL for the cover letter
+        cover_letter_url = generate_cover_letter_url(username, unique_filename)
+    
     # Create application
     db_application = Application(
         job_id=job_id,
@@ -426,9 +475,9 @@ async def create_application(
         phone=phone,
         portfolio=portfolio,
         social_link=social_link,
-        experience=experience,
-        cover_letter=cover_letter,
-        cv_filename=cv_url  # Store the full URL instead of just filename
+        state_of_resident=state_of_resident,
+        cv_filename=cv_url,  # Store the full URL instead of just filename
+        cover_letter=cover_letter_url  # Store the full URL for cover letter
     )
     
     db.add(db_application)
@@ -451,9 +500,9 @@ async def apply_for_job(
     phone: str = Form(...),
     portfolio: Optional[str] = Form(None),
     social_link: str = Form(...),
-    experience: str = Form(...),
-    cover_letter: str = Form(...),
+    state_of_resident: str = Form(...),
     cv_file: Optional[UploadFile] = File(None),
+    cover_letter_file: Optional[UploadFile] = File(None),
     db: Session = Depends(get_db)
 ):
     """Submit a job application - Alternative endpoint that matches React form"""
@@ -481,6 +530,9 @@ async def apply_for_job(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
     
+    # Create username from email (you can modify this logic as needed)
+    username = email.split('@')[0]
+    
     cv_url = None
     if cv_file:
         # Validate file type and size
@@ -489,19 +541,16 @@ async def apply_for_job(
         if cv_file.content_type not in allowed_types:
             raise HTTPException(
                 status_code=400, 
-                detail="Only PDF, DOC, and DOCX files are allowed"
+                detail="CV: Only PDF, DOC, and DOCX files are allowed"
             )
         
         # Check file size (5MB limit)
         if cv_file.size > 5 * 1024 * 1024:
-            raise HTTPException(status_code=400, detail="File size must be less than 5MB")
+            raise HTTPException(status_code=400, detail="CV file size must be less than 5MB")
         
         # Generate unique filename
         file_extension = cv_file.filename.split('.')[-1] if '.' in cv_file.filename else 'pdf'
         unique_filename = f"{uuid.uuid4()}.{file_extension}"
-        
-        # Create username from email (you can modify this logic as needed)
-        username = email.split('@')[0]
         
         # Create user-specific directory
         user_upload_dir = UPLOAD_DIR / username
@@ -516,6 +565,39 @@ async def apply_for_job(
         # Generate full URL for the CV
         cv_url = generate_cv_url(username, unique_filename)
     
+    cover_letter_url = None
+    if cover_letter_file:
+        # Validate file type and size for cover letter
+        allowed_types = ['application/pdf', 'application/msword', 
+                        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                        'text/plain']
+        if cover_letter_file.content_type not in allowed_types:
+            raise HTTPException(
+                status_code=400, 
+                detail="Cover Letter: Only PDF, DOC, DOCX, and TXT files are allowed"
+            )
+        
+        # Check file size (5MB limit)
+        if cover_letter_file.size > 5 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="Cover letter file size must be less than 5MB")
+        
+        # Generate unique filename
+        file_extension = cover_letter_file.filename.split('.')[-1] if '.' in cover_letter_file.filename else 'pdf'
+        unique_filename = f"{uuid.uuid4()}.{file_extension}"
+        
+        # Create user-specific directory for cover letters
+        user_cover_letter_dir = COVER_LETTER_DIR / username
+        user_cover_letter_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Save file
+        file_path = user_cover_letter_dir / unique_filename
+        with open(file_path, "wb") as buffer:
+            content = await cover_letter_file.read()
+            buffer.write(content)
+        
+        # Generate full URL for the cover letter
+        cover_letter_url = generate_cover_letter_url(username, unique_filename)
+    
     # Create application
     db_application = Application(
         job_id=job_id,
@@ -529,9 +611,9 @@ async def apply_for_job(
         phone=phone,
         portfolio=portfolio,
         social_link=social_link,
-        experience=experience,
-        cover_letter=cover_letter,
-        cv_filename=cv_url  # Store the full URL instead of just filename
+        state_of_resident=state_of_resident,
+        cv_filename=cv_url,  # Store the full URL instead of just filename
+        cover_letter=cover_letter_url  # Store the full URL for cover letter
     )
     
     db.add(db_application)
@@ -540,8 +622,6 @@ async def apply_for_job(
     
     return db_application
 
-
-
 @app.get("/applications/{application_id}", response_model=ApplicationWithJob)
 def get_application(application_id: int, db: Session = Depends(get_db)):
     """Get a specific application (Admin only)"""
@@ -549,9 +629,6 @@ def get_application(application_id: int, db: Session = Depends(get_db)):
     if application is None:
         raise HTTPException(status_code=404, detail="Application not found")
     return application
-
-
-
 
 # Update your endpoint to use the model
 @app.put("/applications/{application_id}/status")
@@ -577,7 +654,6 @@ def update_application_status(
     
     return {"message": f"Application status updated to {status_update.status}"}
 
-
 @app.get("/{username}/cv/{filename}")
 async def get_cv_file(username: str, filename: str):
     """Serve CV files"""
@@ -585,8 +661,6 @@ async def get_cv_file(username: str, filename: str):
     
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="CV file not found")
-    
-    from fastapi.responses import FileResponse
     
     # Determine the correct media type based on file extension
     file_extension = filename.split('.')[-1].lower()
@@ -598,6 +672,37 @@ async def get_cv_file(username: str, filename: str):
         'jpeg': 'image/jpeg',
         'png': 'image/png',
         'gif': 'image/gif'
+    }
+    
+    media_type = media_type_map.get(file_extension, 'application/octet-stream')
+    
+    return FileResponse(
+        path=file_path,
+        media_type=media_type,
+        filename=filename,
+        headers={
+            "Cache-Control": "no-cache",
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET",
+            "Access-Control-Allow-Headers": "*"
+        }
+    )
+
+@app.get("/{username}/cover_letter/{filename}")
+async def get_cover_letter_file(username: str, filename: str):
+    """Serve cover letter files"""
+    file_path = COVER_LETTER_DIR / username / filename
+    
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Cover letter file not found")
+    
+    # Determine the correct media type based on file extension
+    file_extension = filename.split('.')[-1].lower()
+    media_type_map = {
+        'pdf': 'application/pdf',
+        'doc': 'application/msword',
+        'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'txt': 'text/plain'
     }
     
     media_type = media_type_map.get(file_extension, 'application/octet-stream')
@@ -663,10 +768,15 @@ async def download_application_cv(
         filename=f"{application.first_name}_{application.last_name}_CV.{file_extension}",
         headers={
             "Content-Disposition": f"attachment; filename={application.first_name}_{application.last_name}_CV.{file_extension}",
-            "Cache-Control": "no-cache"
+            "Cache-Control": "no-cache",
+             "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET",
+            "Access-Control-Allow-Headers": "*"
         }
     )
-
+            
+            
+            
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
